@@ -1,4 +1,8 @@
 /*** includes ***/
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
 #include <unistd.h>
 #include <termios.h>
 #include <stdlib.h>
@@ -7,12 +11,18 @@
 #include <errno.h>
 #include <sys/ioctl.h>
 #include <string.h>
+#include <sys/types.h>
 
-/*** defines ***/
+/*** custom defines ***/
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define CURRENT_VERSION "0.0.1"
 
 /*** data ***/
+typedef struct editrow
+{
+    int size;
+    char *chars;
+} editrow;
 
 struct editorConfig
 {
@@ -22,15 +32,19 @@ struct editorConfig
 
     int cx;
     int cy;
-};
+    int row_offset;
+    int col_offset;
 
+    int numrows;
+    editrow *rows;
+};
 struct editorConfig edit_conf;
 
-struct cache_buffer
+typedef struct cache_buffer
 {
     char *cbuffer;
     int len;
-};
+} cache_buffer;
 
 #define CBUFFER_INIT \
     {                \
@@ -50,7 +64,18 @@ enum editorKey
 
 /*** functions ***/
 
-void cBAppend(struct cache_buffer *cb, const char *s, int len)
+void editorAppendRow(char *s, size_t len)
+{
+    edit_conf.rows = realloc(edit_conf.rows, sizeof(editrow) * (edit_conf.numrows + 1));
+    int rowcount = edit_conf.numrows;
+    edit_conf.rows[rowcount].size = len;
+    edit_conf.rows[rowcount].chars = malloc(len + 1);
+    memcpy(edit_conf.rows[rowcount].chars, s, len);
+    edit_conf.rows[rowcount].chars[len] = '\0';
+    edit_conf.numrows++;
+}
+
+void cBAppend(cache_buffer *cb, const char *s, int len)
 {
     char *new = realloc(cb->cbuffer, cb->len + len);
     if (new == NULL)
@@ -59,7 +84,7 @@ void cBAppend(struct cache_buffer *cb, const char *s, int len)
     cb->cbuffer = new;
     cb->len += len;
 }
-void cBFree(struct cache_buffer *cb)
+void cBFree(cache_buffer *cb)
 {
     free(cb->cbuffer);
 }
@@ -79,35 +104,80 @@ int getWindowSize(int *rows, int *cols)
     }
 }
 
-void editorDrawRows(struct cache_buffer *cbuf)
+char *parse_line(char *input, int input_len, int *len_out)
 {
-    for (int y = 0; y < edit_conf.screen_rows; y++)
+    int tabs = 0;
+    for (int i = 0; i < input_len; i++)
     {
-
-        if (y == 2)
+        if (input[i] == '\t')
         {
-            char welcome[80];
-            int welcome_len = snprintf(welcome, sizeof(welcome), "RPGEditor version %s", CURRENT_VERSION);
-            if (welcome_len > edit_conf.screen_cols)
-                welcome_len = edit_conf.screen_cols;
-
-            int padding = (edit_conf.screen_cols - welcome_len) / 2;
-
-            if (padding)
+            tabs++;
+        }
+    }
+    int new_len = input_len + 3 * tabs;
+    char *output = malloc(new_len);
+    int diff = 0;
+    for (int i = 0; i < input_len; i++)
+    {
+        if (input[i] == '\t')
+        {
+            for (int j = 0; j < 3; j++)
             {
-                cBAppend(cbuf, "~", 1);
-                padding--;
+                output[i + diff] = ' ';
+                diff++;
             }
-            while (padding--)
-            {
-                cBAppend(cbuf, " ", 1);
-            }
-
-            cBAppend(cbuf, welcome, welcome_len);
         }
         else
         {
-            cBAppend(cbuf, "~", 1);
+            output[i + diff] = input[i];
+        }
+    }
+    *len_out = new_len;
+    return output;
+}
+
+void render_editor(cache_buffer *cbuf)
+{
+    for (int y = 0; y < edit_conf.screen_rows; y++)
+    {
+        int filerow = y + edit_conf.row_offset;
+        if (filerow >= edit_conf.numrows)
+        {
+            if (y == 2 && edit_conf.numrows == 0)
+            {
+                char welcome[80];
+                int welcome_len = snprintf(welcome, sizeof(welcome), "RPGEditor version %s", CURRENT_VERSION);
+                if (welcome_len > edit_conf.screen_cols)
+                    welcome_len = edit_conf.screen_cols;
+
+                int padding = (edit_conf.screen_cols - welcome_len) / 2;
+
+                if (padding)
+                {
+                    cBAppend(cbuf, "~", 1);
+                    padding--;
+                }
+                while (padding--)
+                {
+                    cBAppend(cbuf, " ", 1);
+                }
+
+                cBAppend(cbuf, welcome, welcome_len);
+            }
+
+            else
+            {
+                cBAppend(cbuf, "~", 1);
+            }
+        }
+        else
+        {
+            int len = edit_conf.rows[filerow].size;
+            if (len > edit_conf.screen_cols)
+                len = edit_conf.screen_cols;
+            int out_len = 0;
+            char *parsed = parse_line(edit_conf.rows[filerow].chars, len, &out_len);
+            cBAppend(cbuf, parsed, out_len);
         }
 
         cBAppend(cbuf, "\x1b[K", 3);
@@ -121,12 +191,12 @@ void editorDrawRows(struct cache_buffer *cbuf)
 
 void editorRefreshScreen()
 {
-    struct cache_buffer cb = CBUFFER_INIT;
+    cache_buffer cb = CBUFFER_INIT;
 
     cBAppend(&cb, "\x1b[?25l", 6);
     cBAppend(&cb, "\x1b[H", 3);
 
-    editorDrawRows(&cb);
+    render_editor(&cb);
 
     char buf[32];
     snprintf(buf, sizeof(buf), "\x1b[%d;%dH", edit_conf.cy + 1, edit_conf.cx + 1);
@@ -143,6 +213,29 @@ void die(const char *s)
     editorRefreshScreen();
     perror(s);
     exit(1);
+}
+
+void editorOpen(char *file_name)
+{
+    FILE *fp = fopen(file_name, "r");
+    if (!fp)
+        die("fopen");
+
+    char *line;
+    size_t linecap = 0;
+    ssize_t linelen;
+
+    while ((linelen = getline(&line, &linecap, fp)) != -1)
+    {
+
+        while (linelen > 0 && (strcmp(&line[linelen - 1], "\n") == 0 || strcmp(&line[linelen - 1], "\r") == 0))
+        {
+            linelen--;
+        }
+        editorAppendRow(line, linelen);
+    }
+    free(line);
+    fclose(fp);
 }
 
 void disableRawMode()
@@ -221,6 +314,8 @@ int editorReadKey()
                     return ARROW_RIGHT;
                 case 'D':
                     return ARROW_LEFT;
+                case '3':
+                    return DEL_KEY;
                 }
             }
         }
@@ -241,6 +336,14 @@ void editorDisplayKeypress(char character)
     }
 }
 
+void snap_to_line_end()
+{
+    if (edit_conf.cx > edit_conf.rows[edit_conf.cy].size)
+    {
+        edit_conf.cx = edit_conf.rows[edit_conf.cy].size;
+    }
+}
+
 void editorProcessKeypress()
 {
     int character_code = editorReadKey();
@@ -258,6 +361,14 @@ void editorProcessKeypress()
         {
             edit_conf.cy--;
         }
+        else
+        {
+            if (edit_conf.row_offset > 0)
+            {
+                edit_conf.row_offset--;
+            }
+        }
+        snap_to_line_end();
         break;
     case ARROW_LEFT:
     case 'a':
@@ -265,6 +376,7 @@ void editorProcessKeypress()
         {
             edit_conf.cx--;
         }
+        snap_to_line_end();
         break;
     case ARROW_DOWN:
     case 's':
@@ -272,6 +384,14 @@ void editorProcessKeypress()
         {
             edit_conf.cy++;
         }
+        else
+        {
+            if (edit_conf.row_offset < edit_conf.numrows - edit_conf.screen_rows)
+            {
+                edit_conf.row_offset++;
+            }
+        }
+        snap_to_line_end();
         break;
     case ARROW_RIGHT:
     case 'd':
@@ -279,25 +399,37 @@ void editorProcessKeypress()
         {
             edit_conf.cx++;
         }
+        snap_to_line_end();
         break;
     case PAGE_UP:
         edit_conf.cy = 0;
+        snap_to_line_end();
         break;
     case PAGE_DOWN:
-        edit_conf.cy = edit_conf.screen_rows;
+        edit_conf.cy = edit_conf.screen_rows - 1;
+        snap_to_line_end();
         break;
     }
 }
 
 /*** init ***/
 
-int main()
+int main(int argc, char *argv[])
 {
     enableRawMode();
     if (getWindowSize(&edit_conf.screen_rows, &edit_conf.screen_cols) == -1)
         die("getWindowSize");
     edit_conf.cx = 0;
     edit_conf.cy = 0;
+    edit_conf.row_offset = 0;
+    edit_conf.numrows = 0;
+    edit_conf.rows = NULL;
+
+    if (argc >= 2)
+    {
+        editorOpen(argv[1]);
+    }
+
     editorRefreshScreen();
     while (1)
     {
