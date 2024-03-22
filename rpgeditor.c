@@ -37,6 +37,8 @@ struct editorConfig
 
     int numrows;
     editrow *rows;
+
+    char *file_name;
 };
 struct editorConfig edit_conf;
 
@@ -181,12 +183,41 @@ void render_editor(cache_buffer *cbuf)
         }
 
         cBAppend(cbuf, "\x1b[K", 3);
-        if (y < edit_conf.screen_rows - 1)
-        {
-            cBAppend(cbuf, "\r\n", 2);
-        }
+
+        cBAppend(cbuf, "\r\n", 2);
     }
     write(STDOUT_FILENO, "\x1b[H", 3);
+}
+
+void render_status_bar(cache_buffer *cbuf)
+{
+    cBAppend(cbuf, "\x1b[7m", 4);
+    char status[40], r_status[40];
+
+    int len = snprintf(status, sizeof(status), "%.20s - %d lines",
+                       edit_conf.file_name ? edit_conf.file_name : "[No Name]", edit_conf.numrows);
+
+    int rlen = snprintf(r_status, sizeof(r_status), "%d/%d",
+                        edit_conf.cy + 1 + edit_conf.row_offset, edit_conf.numrows);
+
+    if (len > edit_conf.screen_cols)
+        len = edit_conf.screen_cols;
+    cBAppend(cbuf, status, len);
+
+    while (len < edit_conf.screen_cols)
+    {
+        if (edit_conf.screen_cols - len == rlen)
+        {
+            cBAppend(cbuf, r_status, rlen);
+            break;
+        }
+        else
+        {
+            cBAppend(cbuf, " ", 1);
+            len++;
+        }
+    }
+    cBAppend(cbuf, "\x1b[m", 3);
 }
 
 void editorRefreshScreen()
@@ -197,6 +228,7 @@ void editorRefreshScreen()
     cBAppend(&cb, "\x1b[H", 3);
 
     render_editor(&cb);
+    render_status_bar(&cb);
 
     char buf[32];
     snprintf(buf, sizeof(buf), "\x1b[%d;%dH", edit_conf.cy + 1, edit_conf.cx + 1);
@@ -217,6 +249,9 @@ void die(const char *s)
 
 void editorOpen(char *file_name)
 {
+    free(edit_conf.file_name);
+    edit_conf.file_name = strdup(file_name);
+
     FILE *fp = fopen(file_name, "r");
     if (!fp)
         die("fopen");
@@ -338,9 +373,9 @@ void editorDisplayKeypress(char character)
 
 void snap_to_line_end()
 {
-    if (edit_conf.cx > edit_conf.rows[edit_conf.cy].size)
+    if (edit_conf.cx > edit_conf.rows[edit_conf.cy + edit_conf.row_offset].size)
     {
-        edit_conf.cx = edit_conf.rows[edit_conf.cy].size;
+        edit_conf.cx = edit_conf.rows[edit_conf.cy + edit_conf.row_offset].size;
     }
 }
 
@@ -424,7 +459,8 @@ int main(int argc, char *argv[])
     edit_conf.row_offset = 0;
     edit_conf.numrows = 0;
     edit_conf.rows = NULL;
-
+    edit_conf.screen_rows--;
+    edit_conf.file_name = NULL;
     if (argc >= 2)
     {
         editorOpen(argv[1]);
