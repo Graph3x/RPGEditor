@@ -16,7 +16,7 @@
 
 /*** custom defines ***/
 #define CTRL_KEY(k) ((k) & 0x1f)
-#define CURRENT_VERSION "0.0.1"
+#define CURRENT_VERSION "0.5.1"
 
 /*** data ***/
 typedef struct editrow
@@ -24,6 +24,21 @@ typedef struct editrow
     int size;
     char *chars;
 } editrow;
+
+struct inventory_struct
+{
+    int insert;
+    int command;
+    int delete;
+    int fast_travel;
+    int dlc;
+    int nade;
+    int map;
+    int helmet;
+
+    int active;
+};
+struct inventory_struct inventory;
 
 struct editorConfig
 {
@@ -316,6 +331,78 @@ void render_status_bar(cache_buffer *cbuf)
     cBAppend(cbuf, "\x1b[m", 3);
 }
 
+void render_inventory_options(cache_buffer *cbuf, int status)
+{
+    switch (status)
+    {
+    case 0:
+        cBAppend(cbuf, "BUY\r\n", 6);
+        break;
+    case 1:
+        cBAppend(cbuf, "EQUIP\r\n", 8);
+        break;
+    case 2:
+        cBAppend(cbuf, "EQUIPPED\r\n", 10);
+        break;
+    }
+}
+
+void render_inventory(cache_buffer *cbuf)
+{
+    cBAppend(cbuf, "---INVENTORY---\r\n", 17);
+    cBAppend(cbuf, "\r\n", 2);
+    cBAppend(cbuf, "WEAPONS:\r\n", 11);
+
+    cBAppend(cbuf, "  STAFF OF INSERTION - ", 23);
+    render_inventory_options(cbuf, inventory.insert);
+
+    cBAppend(cbuf, "  SWORD OF REMOVAL - ", 21);
+    render_inventory_options(cbuf, inventory.delete);
+
+    cBAppend(cbuf, "  BOW OF COMMAND - ", 19);
+    render_inventory_options(cbuf, inventory.command);
+
+    cBAppend(cbuf, "\r\n", 2);
+    cBAppend(cbuf, "OTHER:\r\n", 8);
+
+    cBAppend(cbuf, "  FAST TRAVEL - ", 16);
+    render_inventory_options(cbuf, inventory.fast_travel);
+
+    cBAppend(cbuf, "  HELMET - ", 11);
+    render_inventory_options(cbuf, inventory.helmet);
+}
+void inventory_handle_enter()
+{
+    switch (edit_conf.cy)
+    {
+    case 3:
+        inventory.insert = 2;
+        inventory.command = 1;
+        inventory.delete = 1;
+        break;
+    case 4:
+        inventory.insert = 1;
+        inventory.command = 1;
+        inventory.delete = 2;
+        break;
+    case 5:
+        inventory.insert = 1;
+        inventory.command = 2;
+        inventory.delete = 1;
+        break;
+    case 8:
+        inventory.fast_travel++;
+        if (inventory.fast_travel == 3)
+            inventory.fast_travel = 1;
+        break;
+    case 9:
+        inventory.helmet++;
+        if (inventory.helmet == 3)
+            inventory.helmet = 1;
+        break;
+    }
+}
+
 void editorRefreshScreen()
 {
     cache_buffer cb = CBUFFER_INIT;
@@ -323,13 +410,20 @@ void editorRefreshScreen()
     cBAppend(&cb, "\x1b[?25l", 6);
     cBAppend(&cb, "\x1b[H", 3);
 
-    render_editor(&cb);
-    render_status_bar(&cb);
+    if (inventory.active == 1)
+    {
+        cBAppend(&cb, "\x1b[2J", 4);
+        render_inventory(&cb);
+    }
+    else
+    {
+        render_editor(&cb);
+        render_status_bar(&cb);
+    }
 
     char buf[32];
     snprintf(buf, sizeof(buf), "\x1b[%d;%dH", edit_conf.cy + 1, edit_conf.cx + 1);
     cBAppend(&cb, buf, strlen(buf));
-
     cBAppend(&cb, "\x1b[?25h", 6);
 
     write(STDOUT_FILENO, cb.cbuffer, cb.len);
@@ -521,20 +615,279 @@ void snap_to_line_end()
     }
 }
 
-void editorProcessKeypress()
+void editor_process_keypress()
 {
     int character_code = editorReadKey();
-    // editorDisplayKeypress(character_code);
 
+    if (inventory.command == 2)
+    {
+        switch (character_code)
+        {
+        case CTRL_KEY('q'):
+            editorRefreshScreen();
+            exit(0);
+            break;
+
+        case 'q':
+            if (inventory.helmet != 2)
+            {
+                editorRefreshScreen();
+                exit(0);
+            }
+            break;
+
+        case CTRL_KEY('s'):
+            editorSave();
+            break;
+
+        case ARROW_UP:
+        case 'w':
+            if (edit_conf.cy != 0)
+            {
+                edit_conf.cy--;
+            }
+            else
+            {
+                if (edit_conf.row_offset > 0)
+                {
+                    edit_conf.row_offset--;
+                }
+            }
+            snap_to_line_end();
+            break;
+
+        case ARROW_LEFT:
+        case 'a':
+            if (edit_conf.cx != 0)
+            {
+                edit_conf.cx--;
+            }
+            snap_to_line_end();
+            break;
+
+        case ARROW_DOWN:
+        case 's':
+            if (edit_conf.cy != edit_conf.screen_rows - 1)
+            {
+                edit_conf.cy++;
+            }
+            else
+            {
+                if (edit_conf.row_offset < edit_conf.numrows - edit_conf.screen_rows)
+                {
+                    edit_conf.row_offset++;
+                }
+            }
+            snap_to_line_end();
+            break;
+
+        case ARROW_RIGHT:
+        case 'd':
+            if (edit_conf.cx != edit_conf.screen_cols - 1)
+            {
+                edit_conf.cx++;
+            }
+            snap_to_line_end();
+            break;
+
+        case PAGE_UP:
+            if (inventory.fast_travel == 2)
+            {
+                edit_conf.cy = 0;
+                snap_to_line_end();
+            }
+            break;
+
+        case PAGE_DOWN:
+            if (inventory.fast_travel == 2)
+            {
+                edit_conf.cy = edit_conf.screen_rows - 1;
+                snap_to_line_end();
+            }
+            break;
+
+        case CTRL_KEY('I'):
+            inventory.active = 1;
+            break;
+        }
+    }
+
+    else if (inventory.insert == 2)
+    {
+        switch (character_code)
+        {
+        case ARROW_UP:
+            if (edit_conf.cy != 0)
+            {
+                edit_conf.cy--;
+            }
+            else
+            {
+                if (edit_conf.row_offset > 0)
+                {
+                    edit_conf.row_offset--;
+                }
+            }
+            snap_to_line_end();
+            break;
+
+        case ARROW_LEFT:
+            if (edit_conf.cx != 0)
+            {
+                edit_conf.cx--;
+            }
+            snap_to_line_end();
+            break;
+
+        case ARROW_DOWN:
+            if (edit_conf.cy != edit_conf.screen_rows - 1)
+            {
+                edit_conf.cy++;
+            }
+            else
+            {
+                if (edit_conf.row_offset < edit_conf.numrows - edit_conf.screen_rows)
+                {
+                    edit_conf.row_offset++;
+                }
+            }
+            snap_to_line_end();
+            break;
+
+        case ARROW_RIGHT:
+            if (edit_conf.cx != edit_conf.screen_cols - 1)
+            {
+                edit_conf.cx++;
+            }
+            snap_to_line_end();
+            break;
+
+        case PAGE_UP:
+            if (inventory.fast_travel == 2)
+            {
+                edit_conf.cy = 0;
+                snap_to_line_end();
+            }
+            break;
+
+        case PAGE_DOWN:
+            if (inventory.fast_travel == 2)
+            {
+                edit_conf.cy = edit_conf.screen_rows - 1;
+                snap_to_line_end();
+            }
+            break;
+
+        case '\r':
+            editorInsertNewline();
+            break;
+
+        case CTRL_KEY('I'):
+            inventory.active = 1;
+            break;
+
+        case BACKSPACE:
+        case CTRL_KEY('h'):
+        case CTRL_KEY('l'):
+        case '\x1b':
+            // DO NOT DO ANYTHING
+            break;
+
+        default:
+            editorInsertChar(character_code);
+            break;
+        }
+    }
+
+    else
+    {
+        switch (character_code)
+        {
+        case ARROW_UP:
+        case 'w':
+            if (edit_conf.cy != 0)
+            {
+                edit_conf.cy--;
+            }
+            else
+            {
+                if (edit_conf.row_offset > 0)
+                {
+                    edit_conf.row_offset--;
+                }
+            }
+            snap_to_line_end();
+            break;
+
+        case ARROW_LEFT:
+        case 'a':
+            if (edit_conf.cx != 0)
+            {
+                edit_conf.cx--;
+            }
+            snap_to_line_end();
+            break;
+
+        case ARROW_DOWN:
+        case 's':
+            if (edit_conf.cy != edit_conf.screen_rows - 1)
+            {
+                edit_conf.cy++;
+            }
+            else
+            {
+                if (edit_conf.row_offset < edit_conf.numrows - edit_conf.screen_rows)
+                {
+                    edit_conf.row_offset++;
+                }
+            }
+            snap_to_line_end();
+            break;
+
+        case ARROW_RIGHT:
+        case 'd':
+            if (edit_conf.cx != edit_conf.screen_cols - 1)
+            {
+                edit_conf.cx++;
+            }
+            snap_to_line_end();
+            break;
+
+        case PAGE_UP:
+            if (inventory.fast_travel == 2)
+            {
+                edit_conf.cy = 0;
+                snap_to_line_end();
+            }
+            break;
+
+        case PAGE_DOWN:
+            if (inventory.fast_travel == 2)
+            {
+                edit_conf.cy = edit_conf.screen_rows - 1;
+                snap_to_line_end();
+            }
+            break;
+
+        case BACKSPACE:
+        case CTRL_KEY('h'):
+            editorDelChar();
+            break;
+
+        case CTRL_KEY('I'):
+            inventory.active = 0;
+            break;
+        }
+    }
+}
+
+void inventory_process_keypress()
+{
+    int character_code = editorReadKey();
     switch (character_code)
     {
-    case CTRL_KEY('q'):
-        editorRefreshScreen();
-        exit(0);
-        break;
-
-    case CTRL_KEY('s'):
-        editorSave();
+    case 'q':
+        inventory.active = 0;
         break;
 
     case ARROW_UP:
@@ -550,7 +903,6 @@ void editorProcessKeypress()
                 edit_conf.row_offset--;
             }
         }
-        snap_to_line_end();
         break;
 
     case ARROW_LEFT:
@@ -559,7 +911,6 @@ void editorProcessKeypress()
         {
             edit_conf.cx--;
         }
-        snap_to_line_end();
         break;
 
     case ARROW_DOWN:
@@ -575,7 +926,6 @@ void editorProcessKeypress()
                 edit_conf.row_offset++;
             }
         }
-        snap_to_line_end();
         break;
 
     case ARROW_RIGHT:
@@ -584,35 +934,10 @@ void editorProcessKeypress()
         {
             edit_conf.cx++;
         }
-        snap_to_line_end();
-        break;
-
-    case PAGE_UP:
-        edit_conf.cy = 0;
-        snap_to_line_end();
-        break;
-
-    case PAGE_DOWN:
-        edit_conf.cy = edit_conf.screen_rows - 1;
-        snap_to_line_end();
         break;
 
     case '\r':
-        editorInsertNewline();
-        break;
-
-    case BACKSPACE:
-    case CTRL_KEY('h'):
-        editorDelChar();
-        break;
-
-    case CTRL_KEY('l'):
-    case '\x1b':
-        // DO NOT DO ANYTHING
-        break;
-
-    default:
-        editorInsertChar(character_code);
+        inventory_handle_enter();
         break;
     }
 }
@@ -624,6 +949,7 @@ int main(int argc, char *argv[])
     enableRawMode();
     if (getWindowSize(&edit_conf.screen_rows, &edit_conf.screen_cols) == -1)
         die("getWindowSize");
+
     edit_conf.cx = 0;
     edit_conf.cy = 0;
     edit_conf.row_offset = 0;
@@ -631,6 +957,18 @@ int main(int argc, char *argv[])
     edit_conf.rows = NULL;
     edit_conf.screen_rows--;
     edit_conf.file_name = NULL;
+
+    // 0 -> not owned; 1 -> owned; 2 -> active
+    inventory.insert = 1;
+    inventory.command = 2;
+    inventory.delete = 1;
+    inventory.fast_travel = 0;
+    inventory.dlc = 0;
+    inventory.nade = 0;
+    inventory.map = 0;
+    inventory.helmet = 0;
+    inventory.active = 0;
+
     if (argc >= 2)
     {
         editorOpen(argv[1]);
@@ -639,7 +977,14 @@ int main(int argc, char *argv[])
     editorRefreshScreen();
     while (1)
     {
-        editorProcessKeypress();
+        if (inventory.active)
+        {
+            inventory_process_keypress();
+        }
+        else
+        {
+            editor_process_keypress();
+        }
         editorRefreshScreen();
     }
     return 0;
