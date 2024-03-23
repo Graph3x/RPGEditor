@@ -83,7 +83,7 @@ enum editorKey
 
 /*** functions ***/
 
-void editorInsertRow(char *s, size_t len, int pos)
+void editor_insert_row(char *s, size_t len, int pos)
 {
     if (pos < 0 || pos > edit_conf.numrows)
         return;
@@ -97,17 +97,17 @@ void editorInsertRow(char *s, size_t len, int pos)
     edit_conf.numrows++;
 }
 
-void editorInsertNewline()
+void editor_insert_newline()
 {
     int line_num = edit_conf.cy + edit_conf.row_offset;
     if (edit_conf.cx == 0)
     {
-        editorInsertRow("", 0, line_num);
+        editor_insert_row("", 0, line_num);
     }
     else
     {
         editrow *row = &edit_conf.rows[line_num];
-        editorInsertRow(&row->chars[edit_conf.cx], row->size - edit_conf.cx, line_num + 1);
+        editor_insert_row(&row->chars[edit_conf.cx], row->size - edit_conf.cx, line_num + 1);
         row = &edit_conf.rows[line_num];
         row->size = edit_conf.cx;
         row->chars[row->size] = '\0';
@@ -116,7 +116,7 @@ void editorInsertNewline()
     edit_conf.cx = 0;
 }
 
-void editorRowInsertChar(editrow *row, int position, int chr)
+void editor_row_insert_char(editrow *row, int position, int chr)
 {
     if (position < 0 || position > row->size)
         position = row->size;
@@ -126,17 +126,17 @@ void editorRowInsertChar(editrow *row, int position, int chr)
     row->chars[position] = chr;
 }
 
-void editorInsertChar(int chr)
+void editor_insert_char(int chr)
 {
     if (edit_conf.cy + edit_conf.row_offset == edit_conf.numrows)
     {
-        editorInsertRow("", 0, edit_conf.numrows);
+        editor_insert_row("", 0, edit_conf.numrows);
     }
-    editorRowInsertChar(&edit_conf.rows[edit_conf.cy + edit_conf.row_offset], edit_conf.cx, chr);
+    editor_row_insert_char(&edit_conf.rows[edit_conf.cy + edit_conf.row_offset], edit_conf.cx, chr);
     edit_conf.cx++;
 }
 
-void editorRowDelChar(editrow *row, int position)
+void editor_row_del_char(editrow *row, int position)
 {
     if (position < 0 || position >= row->size)
         return;
@@ -144,7 +144,7 @@ void editorRowDelChar(editrow *row, int position)
     row->size--;
 }
 
-void editorRowAppendString(editrow *row, char *s, size_t len)
+void editor_row_append_string(editrow *row, char *s, size_t len)
 {
     row->chars = realloc(row->chars, row->size + len + 1);
     memcpy(&row->chars[row->size], s, len);
@@ -152,7 +152,7 @@ void editorRowAppendString(editrow *row, char *s, size_t len)
     row->chars[row->size] = '\0';
 }
 
-void editorDelRow(int position)
+void editor_del_row(int position)
 {
     if (position < 0 || position >= edit_conf.numrows)
         return;
@@ -162,7 +162,7 @@ void editorDelRow(int position)
     edit_conf.numrows--;
 }
 
-void editorDelChar()
+void editor_del_char()
 {
     if (edit_conf.cy == edit_conf.numrows)
         return;
@@ -172,7 +172,7 @@ void editorDelChar()
     editrow *row = &edit_conf.rows[edit_conf.cy];
     if (edit_conf.cx > 0)
     {
-        editorRowDelChar(row, edit_conf.cx - 1);
+        editor_row_del_char(row, edit_conf.cx - 1);
         edit_conf.cx--;
     }
     else
@@ -181,13 +181,13 @@ void editorDelChar()
         if (new_x > edit_conf.screen_cols - 1)
             new_x = edit_conf.screen_cols - 1;
         edit_conf.cx = new_x;
-        editorRowAppendString(&edit_conf.rows[edit_conf.cy - 1], row->chars, row->size);
-        editorDelRow(edit_conf.cy);
+        editor_row_append_string(&edit_conf.rows[edit_conf.cy - 1], row->chars, row->size);
+        editor_del_row(edit_conf.cy);
         edit_conf.cy--;
     }
 }
 
-void cBAppend(cache_buffer *cb, const char *s, int len)
+void cb_append(cache_buffer *cb, const char *s, int len)
 {
     char *new = realloc(cb->cbuffer, cb->len + len);
     if (new == NULL)
@@ -196,12 +196,12 @@ void cBAppend(cache_buffer *cb, const char *s, int len)
     cb->cbuffer = new;
     cb->len += len;
 }
-void cBFree(cache_buffer *cb)
+void cb_free(cache_buffer *cb)
 {
     free(cb->cbuffer);
 }
 
-int getWindowSize(int *rows, int *cols)
+int get_window_size(int *rows, int *cols)
 {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)
@@ -267,20 +267,20 @@ void render_editor(cache_buffer *cbuf)
 
                 if (padding)
                 {
-                    cBAppend(cbuf, "~", 1);
+                    cb_append(cbuf, "~", 1);
                     padding--;
                 }
                 while (padding--)
                 {
-                    cBAppend(cbuf, " ", 1);
+                    cb_append(cbuf, " ", 1);
                 }
 
-                cBAppend(cbuf, welcome, welcome_len);
+                cb_append(cbuf, welcome, welcome_len);
             }
 
             else
             {
-                cBAppend(cbuf, "~", 1);
+                cb_append(cbuf, "~", 1);
             }
         }
         else
@@ -290,19 +290,19 @@ void render_editor(cache_buffer *cbuf)
                 len = edit_conf.screen_cols;
             int out_len = 0;
             char *parsed = parse_line(edit_conf.rows[filerow].chars, len, &out_len);
-            cBAppend(cbuf, parsed, out_len);
+            cb_append(cbuf, parsed, out_len);
         }
 
-        cBAppend(cbuf, "\x1b[K", 3);
+        cb_append(cbuf, "\x1b[K", 3);
 
-        cBAppend(cbuf, "\r\n", 2);
+        cb_append(cbuf, "\r\n", 2);
     }
     write(STDOUT_FILENO, "\x1b[H", 3);
 }
 
 void render_status_bar(cache_buffer *cbuf)
 {
-    cBAppend(cbuf, "\x1b[7m", 4);
+    cb_append(cbuf, "\x1b[7m", 4);
     char status[40], r_status[40];
 
     int len = snprintf(status, sizeof(status), "%.20s - %d lines",
@@ -313,22 +313,22 @@ void render_status_bar(cache_buffer *cbuf)
 
     if (len > edit_conf.screen_cols)
         len = edit_conf.screen_cols;
-    cBAppend(cbuf, status, len);
+    cb_append(cbuf, status, len);
 
     while (len < edit_conf.screen_cols)
     {
         if (edit_conf.screen_cols - len == rlen)
         {
-            cBAppend(cbuf, r_status, rlen);
+            cb_append(cbuf, r_status, rlen);
             break;
         }
         else
         {
-            cBAppend(cbuf, " ", 1);
+            cb_append(cbuf, " ", 1);
             len++;
         }
     }
-    cBAppend(cbuf, "\x1b[m", 3);
+    cb_append(cbuf, "\x1b[m", 3);
 }
 
 void render_inventory_options(cache_buffer *cbuf, int status)
@@ -336,39 +336,39 @@ void render_inventory_options(cache_buffer *cbuf, int status)
     switch (status)
     {
     case 0:
-        cBAppend(cbuf, "BUY\r\n", 6);
+        cb_append(cbuf, "BUY\r\n", 6);
         break;
     case 1:
-        cBAppend(cbuf, "EQUIP\r\n", 8);
+        cb_append(cbuf, "EQUIP\r\n", 8);
         break;
     case 2:
-        cBAppend(cbuf, "EQUIPPED\r\n", 10);
+        cb_append(cbuf, "EQUIPPED\r\n", 10);
         break;
     }
 }
 
 void render_inventory(cache_buffer *cbuf)
 {
-    cBAppend(cbuf, "---INVENTORY---\r\n", 17);
-    cBAppend(cbuf, "\r\n", 2);
-    cBAppend(cbuf, "WEAPONS:\r\n", 11);
+    cb_append(cbuf, "---INVENTORY---\r\n", 17);
+    cb_append(cbuf, "\r\n", 2);
+    cb_append(cbuf, "WEAPONS:\r\n", 11);
 
-    cBAppend(cbuf, "  STAFF OF INSERTION - ", 23);
+    cb_append(cbuf, "  STAFF OF INSERTION - ", 23);
     render_inventory_options(cbuf, inventory.insert);
 
-    cBAppend(cbuf, "  SWORD OF REMOVAL - ", 21);
+    cb_append(cbuf, "  SWORD OF REMOVAL - ", 21);
     render_inventory_options(cbuf, inventory.delete);
 
-    cBAppend(cbuf, "  BOW OF COMMAND - ", 19);
+    cb_append(cbuf, "  BOW OF COMMAND - ", 19);
     render_inventory_options(cbuf, inventory.command);
 
-    cBAppend(cbuf, "\r\n", 2);
-    cBAppend(cbuf, "OTHER:\r\n", 8);
+    cb_append(cbuf, "\r\n", 2);
+    cb_append(cbuf, "OTHER:\r\n", 8);
 
-    cBAppend(cbuf, "  FAST TRAVEL - ", 16);
+    cb_append(cbuf, "  FAST TRAVEL - ", 16);
     render_inventory_options(cbuf, inventory.fast_travel);
 
-    cBAppend(cbuf, "  HELMET - ", 11);
+    cb_append(cbuf, "  HELMET - ", 11);
     render_inventory_options(cbuf, inventory.helmet);
 }
 void inventory_handle_enter()
@@ -403,16 +403,16 @@ void inventory_handle_enter()
     }
 }
 
-void editorRefreshScreen()
+void refresh_screen()
 {
     cache_buffer cb = CBUFFER_INIT;
 
-    cBAppend(&cb, "\x1b[?25l", 6);
-    cBAppend(&cb, "\x1b[H", 3);
+    cb_append(&cb, "\x1b[?25l", 6);
+    cb_append(&cb, "\x1b[H", 3);
 
     if (inventory.active == 1)
     {
-        cBAppend(&cb, "\x1b[2J", 4);
+        cb_append(&cb, "\x1b[2J", 4);
         render_inventory(&cb);
     }
     else
@@ -423,21 +423,21 @@ void editorRefreshScreen()
 
     char buf[32];
     snprintf(buf, sizeof(buf), "\x1b[%d;%dH", edit_conf.cy + 1, edit_conf.cx + 1);
-    cBAppend(&cb, buf, strlen(buf));
-    cBAppend(&cb, "\x1b[?25h", 6);
+    cb_append(&cb, buf, strlen(buf));
+    cb_append(&cb, "\x1b[?25h", 6);
 
     write(STDOUT_FILENO, cb.cbuffer, cb.len);
-    cBFree(&cb);
+    cb_free(&cb);
 }
 
 void die(const char *s)
 {
-    editorRefreshScreen();
+    refresh_screen();
     perror(s);
     exit(1);
 }
 
-void editorOpen(char *file_name)
+void editor_open(char *file_name)
 {
     free(edit_conf.file_name);
     edit_conf.file_name = strdup(file_name);
@@ -457,13 +457,13 @@ void editorOpen(char *file_name)
         {
             linelen--;
         }
-        editorInsertRow(line, linelen, edit_conf.numrows);
+        editor_insert_row(line, linelen, edit_conf.numrows);
     }
     free(line);
     fclose(fp);
 }
 
-char *editorRowsToString(int *buflen)
+char *editor_rows_to_string(int *buflen)
 {
     int total_len = 0;
     for (int j = 0; j < edit_conf.numrows; j++)
@@ -483,12 +483,12 @@ char *editorRowsToString(int *buflen)
     return buf;
 }
 
-void editorSave()
+void editor_save()
 {
     if (edit_conf.file_name == NULL)
         return;
     int len;
-    char *buf = editorRowsToString(&len);
+    char *buf = editor_rows_to_string(&len);
     int fd = open(edit_conf.file_name, O_RDWR | O_CREAT, 0644);
     if (fd == -1)
     {
@@ -509,7 +509,7 @@ void editorSave()
     free(buf);
 }
 
-void disableRawMode()
+void disable_raw_mode()
 {
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &edit_conf.original_term_mode) == -1)
     {
@@ -517,7 +517,7 @@ void disableRawMode()
     }
 }
 
-void enableRawMode()
+void enable_raw_mode()
 {
     if (tcgetattr(STDIN_FILENO, &edit_conf.original_term_mode) == -1)
     {
@@ -534,10 +534,10 @@ void enableRawMode()
         die("tcsetattr");
     }
 
-    atexit(disableRawMode);
+    atexit(disable_raw_mode);
 }
 
-int editorReadKey()
+int editor_read_key()
 {
     int read_code;
     char character;
@@ -595,7 +595,7 @@ int editorReadKey()
     return character;
 }
 
-void editorDisplayKeypress(char character)
+void editor_display_keypress(char character)
 {
     if (iscntrl(character))
     {
@@ -617,27 +617,27 @@ void snap_to_line_end()
 
 void editor_process_keypress()
 {
-    int character_code = editorReadKey();
+    int character_code = editor_read_key();
 
     if (inventory.command == 2)
     {
         switch (character_code)
         {
         case CTRL_KEY('q'):
-            editorRefreshScreen();
+            refresh_screen();
             exit(0);
             break;
 
         case 'q':
             if (inventory.helmet != 2)
             {
-                editorRefreshScreen();
+                refresh_screen();
                 exit(0);
             }
             break;
 
         case CTRL_KEY('s'):
-            editorSave();
+            editor_save();
             break;
 
         case ARROW_UP:
@@ -779,7 +779,7 @@ void editor_process_keypress()
             break;
 
         case '\r':
-            editorInsertNewline();
+            editor_insert_newline();
             break;
 
         case CTRL_KEY('I'):
@@ -794,7 +794,7 @@ void editor_process_keypress()
             break;
 
         default:
-            editorInsertChar(character_code);
+            editor_insert_char(character_code);
             break;
         }
     }
@@ -871,7 +871,7 @@ void editor_process_keypress()
 
         case BACKSPACE:
         case CTRL_KEY('h'):
-            editorDelChar();
+            editor_del_char();
             break;
 
         case CTRL_KEY('I'):
@@ -883,7 +883,7 @@ void editor_process_keypress()
 
 void inventory_process_keypress()
 {
-    int character_code = editorReadKey();
+    int character_code = editor_read_key();
     switch (character_code)
     {
     case 'q':
@@ -946,9 +946,9 @@ void inventory_process_keypress()
 
 int main(int argc, char *argv[])
 {
-    enableRawMode();
-    if (getWindowSize(&edit_conf.screen_rows, &edit_conf.screen_cols) == -1)
-        die("getWindowSize");
+    enable_raw_mode();
+    if (get_window_size(&edit_conf.screen_rows, &edit_conf.screen_cols) == -1)
+        die("get_window_size");
 
     edit_conf.cx = 0;
     edit_conf.cy = 0;
@@ -971,10 +971,10 @@ int main(int argc, char *argv[])
 
     if (argc >= 2)
     {
-        editorOpen(argv[1]);
+        editor_open(argv[1]);
     }
 
-    editorRefreshScreen();
+    refresh_screen();
     while (1)
     {
         if (inventory.active)
@@ -985,7 +985,7 @@ int main(int argc, char *argv[])
         {
             editor_process_keypress();
         }
-        editorRefreshScreen();
+        refresh_screen();
     }
     return 0;
 }
