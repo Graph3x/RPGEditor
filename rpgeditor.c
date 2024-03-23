@@ -12,6 +12,7 @@
 #include <sys/ioctl.h>
 #include <string.h>
 #include <sys/types.h>
+#include <fcntl.h>
 
 /*** custom defines ***/
 #define CTRL_KEY(k) ((k) & 0x1f)
@@ -55,6 +56,7 @@ typedef struct cache_buffer
 
 enum editorKey
 {
+    BACKSPACE = 127,
     ARROW_LEFT = 1000,
     ARROW_RIGHT,
     ARROW_UP,
@@ -66,15 +68,108 @@ enum editorKey
 
 /*** functions ***/
 
-void editorAppendRow(char *s, size_t len)
+void editorInsertRow(char *s, size_t len, int pos)
 {
+    if (pos < 0 || pos > edit_conf.numrows)
+        return;
     edit_conf.rows = realloc(edit_conf.rows, sizeof(editrow) * (edit_conf.numrows + 1));
-    int rowcount = edit_conf.numrows;
-    edit_conf.rows[rowcount].size = len;
-    edit_conf.rows[rowcount].chars = malloc(len + 1);
-    memcpy(edit_conf.rows[rowcount].chars, s, len);
-    edit_conf.rows[rowcount].chars[len] = '\0';
+    memmove(&edit_conf.rows[pos + 1], &edit_conf.rows[pos], sizeof(editrow) * (edit_conf.numrows - pos));
+
+    edit_conf.rows[pos].size = len;
+    edit_conf.rows[pos].chars = malloc(len + 1);
+    memcpy(edit_conf.rows[pos].chars, s, len);
+    edit_conf.rows[pos].chars[len] = '\0';
     edit_conf.numrows++;
+}
+
+void editorInsertNewline()
+{
+    int line_num = edit_conf.cy + edit_conf.row_offset;
+    if (edit_conf.cx == 0)
+    {
+        editorInsertRow("", 0, line_num);
+    }
+    else
+    {
+        editrow *row = &edit_conf.rows[line_num];
+        editorInsertRow(&row->chars[edit_conf.cx], row->size - edit_conf.cx, line_num + 1);
+        row = &edit_conf.rows[line_num];
+        row->size = edit_conf.cx;
+        row->chars[row->size] = '\0';
+    }
+    edit_conf.cy++;
+    edit_conf.cx = 0;
+}
+
+void editorRowInsertChar(editrow *row, int position, int chr)
+{
+    if (position < 0 || position > row->size)
+        position = row->size;
+    row->chars = realloc(row->chars, row->size + 2);
+    memmove(&row->chars[position + 1], &row->chars[position], row->size - position + 1);
+    row->size++;
+    row->chars[position] = chr;
+}
+
+void editorInsertChar(int chr)
+{
+    if (edit_conf.cy + edit_conf.row_offset == edit_conf.numrows)
+    {
+        editorInsertRow("", 0, edit_conf.numrows);
+    }
+    editorRowInsertChar(&edit_conf.rows[edit_conf.cy + edit_conf.row_offset], edit_conf.cx, chr);
+    edit_conf.cx++;
+}
+
+void editorRowDelChar(editrow *row, int position)
+{
+    if (position < 0 || position >= row->size)
+        return;
+    memmove(&row->chars[position], &row->chars[position + 1], row->size - position);
+    row->size--;
+}
+
+void editorRowAppendString(editrow *row, char *s, size_t len)
+{
+    row->chars = realloc(row->chars, row->size + len + 1);
+    memcpy(&row->chars[row->size], s, len);
+    row->size += len;
+    row->chars[row->size] = '\0';
+}
+
+void editorDelRow(int position)
+{
+    if (position < 0 || position >= edit_conf.numrows)
+        return;
+    editrow *row = &edit_conf.rows[position];
+    free(row->chars);
+    memmove(&edit_conf.rows[position], &edit_conf.rows[position + 1], sizeof(editrow) * (edit_conf.numrows - position - 1));
+    edit_conf.numrows--;
+}
+
+void editorDelChar()
+{
+    if (edit_conf.cy == edit_conf.numrows)
+        return;
+    if (edit_conf.cx == 0 && edit_conf.cy == 0)
+        return;
+
+    editrow *row = &edit_conf.rows[edit_conf.cy];
+    if (edit_conf.cx > 0)
+    {
+        editorRowDelChar(row, edit_conf.cx - 1);
+        edit_conf.cx--;
+    }
+    else
+    {
+        int new_x = edit_conf.rows[edit_conf.cy - 1].size;
+        if (new_x > edit_conf.screen_cols - 1)
+            new_x = edit_conf.screen_cols - 1;
+        edit_conf.cx = new_x;
+        editorRowAppendString(&edit_conf.rows[edit_conf.cy - 1], row->chars, row->size);
+        editorDelRow(edit_conf.cy);
+        edit_conf.cy--;
+    }
 }
 
 void cBAppend(cache_buffer *cb, const char *s, int len)
@@ -123,11 +218,12 @@ char *parse_line(char *input, int input_len, int *len_out)
     {
         if (input[i] == '\t')
         {
-            for (int j = 0; j < 3; j++)
+            for (int j = 0; j < 4; j++)
             {
                 output[i + diff] = ' ';
                 diff++;
             }
+            diff--;
         }
         else
         {
@@ -267,10 +363,56 @@ void editorOpen(char *file_name)
         {
             linelen--;
         }
-        editorAppendRow(line, linelen);
+        editorInsertRow(line, linelen, edit_conf.numrows);
     }
     free(line);
     fclose(fp);
+}
+
+char *editorRowsToString(int *buflen)
+{
+    int total_len = 0;
+    for (int j = 0; j < edit_conf.numrows; j++)
+    {
+        total_len += edit_conf.rows[j].size + 1;
+    }
+    *buflen = total_len;
+    char *buf = malloc(total_len);
+    char *buf_iter = buf;
+    for (int j = 0; j < edit_conf.numrows; j++)
+    {
+        memcpy(buf_iter, edit_conf.rows[j].chars, edit_conf.rows[j].size);
+        buf_iter += edit_conf.rows[j].size;
+        *buf_iter = '\n';
+        buf_iter++;
+    }
+    return buf;
+}
+
+void editorSave()
+{
+    if (edit_conf.file_name == NULL)
+        return;
+    int len;
+    char *buf = editorRowsToString(&len);
+    int fd = open(edit_conf.file_name, O_RDWR | O_CREAT, 0644);
+    if (fd == -1)
+    {
+        close(fd);
+        free(buf);
+        return;
+    }
+    if (ftruncate(fd, len) != -1)
+    {
+        if (write(fd, buf, len) == len)
+        {
+            close(fd);
+            free(buf);
+            return;
+        }
+        close(fd);
+    }
+    free(buf);
 }
 
 void disableRawMode()
@@ -390,6 +532,11 @@ void editorProcessKeypress()
         editorRefreshScreen();
         exit(0);
         break;
+
+    case CTRL_KEY('s'):
+        editorSave();
+        break;
+
     case ARROW_UP:
     case 'w':
         if (edit_conf.cy != 0)
@@ -405,6 +552,7 @@ void editorProcessKeypress()
         }
         snap_to_line_end();
         break;
+
     case ARROW_LEFT:
     case 'a':
         if (edit_conf.cx != 0)
@@ -413,6 +561,7 @@ void editorProcessKeypress()
         }
         snap_to_line_end();
         break;
+
     case ARROW_DOWN:
     case 's':
         if (edit_conf.cy != edit_conf.screen_rows - 1)
@@ -428,6 +577,7 @@ void editorProcessKeypress()
         }
         snap_to_line_end();
         break;
+
     case ARROW_RIGHT:
     case 'd':
         if (edit_conf.cx != edit_conf.screen_cols - 1)
@@ -436,13 +586,33 @@ void editorProcessKeypress()
         }
         snap_to_line_end();
         break;
+
     case PAGE_UP:
         edit_conf.cy = 0;
         snap_to_line_end();
         break;
+
     case PAGE_DOWN:
         edit_conf.cy = edit_conf.screen_rows - 1;
         snap_to_line_end();
+        break;
+
+    case '\r':
+        editorInsertNewline();
+        break;
+
+    case BACKSPACE:
+    case CTRL_KEY('h'):
+        editorDelChar();
+        break;
+
+    case CTRL_KEY('l'):
+    case '\x1b':
+        // DO NOT DO ANYTHING
+        break;
+
+    default:
+        editorInsertChar(character_code);
         break;
     }
 }
