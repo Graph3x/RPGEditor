@@ -609,6 +609,10 @@ void editor_display_keypress(char character)
 
 void snap_to_line_end()
 {
+    if (edit_conf.cy >= edit_conf.numrows)
+    {
+        return;
+    }
     if (edit_conf.cx > edit_conf.rows[edit_conf.cy + edit_conf.row_offset].size)
     {
         edit_conf.cx = edit_conf.rows[edit_conf.cy + edit_conf.row_offset].size;
